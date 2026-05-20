@@ -1,0 +1,616 @@
+// Schema for the Wiki Platform v1 (Fútbol).
+// See `.claude/current-adr.md` §4 for full design rationale.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- ENUMS ----------
+
+enum Confederation {
+  CONMEBOL
+  UEFA
+  AFC
+  CAF
+  CONCACAF
+  OFC
+}
+
+enum Position {
+  GK
+  DEF
+  MID
+  FWD
+  UNKNOWN
+}
+
+enum Foot {
+  LEFT
+  RIGHT
+  BOTH
+  UNKNOWN
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  FINISHED
+  POSTPONED
+  CANCELLED
+  ABANDONED
+}
+
+enum MatchEventType {
+  GOAL
+  OWN_GOAL
+  PENALTY_SCORED
+  PENALTY_MISSED
+  YELLOW_CARD
+  RED_CARD
+  SUBSTITUTION
+  VAR_CHECK
+}
+
+enum HonorType {
+  CHAMPION
+  RUNNER_UP
+  THIRD_PLACE
+  TOP_SCORER
+  MVP
+  GOLDEN_GLOVE
+  GOLDEN_BOOT
+  FAIR_PLAY
+}
+
+enum SourceType {
+  WIKIPEDIA_ES
+  WIKIPEDIA_EN
+  TRANSFERMARKT
+  OFFICIAL_TEAM
+  OFFICIAL_LEAGUE
+  OFFICIAL_FEDERATION
+  FBREF
+  ESPN_DEPORTES
+  NEWS
+  BOOK
+  OTHER
+}
+
+enum CitationConfidence {
+  VERIFIED
+  PROBABLE
+  UNVERIFIED
+}
+
+enum CoachRole {
+  HEAD
+  ASSISTANT
+  GOALKEEPER_COACH
+  CARETAKER
+}
+
+enum SeasonStatus {
+  UPCOMING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum TeamSeasonOutcome {
+  CHAMPION
+  RUNNER_UP
+  QUALIFIED_INTERNATIONAL
+  MID_TABLE
+  RELEGATED
+  PROMOTED
+  PLAYOFF_LOST
+}
+
+// ---------- CORE ENTITIES ----------
+
+model Country {
+  id            String       @id @default(cuid())
+  isoCode       String       @unique
+  name          String
+  confederation Confederation
+  flagUrl       String?
+  description   String?
+
+  // back-relations
+  teams                  Team[]
+  bornPlayers            Player[]
+  coaches                Coach[]
+  nationalTeam           NationalTeam?
+  leagues                League[]
+  stadiums               Stadium[]
+  tournamentEditionsHost TournamentEdition[] @relation("EditionHostCountry")
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastResearchedAt DateTime?
+
+  @@index([confederation])
+}
+
+model League {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
+  shortName   String?
+  tier        Int
+  foundedYear Int?
+  organizer   String?
+  logoUrl     String?
+  description String?
+  story       Json?
+
+  countryId String
+  country   Country @relation(fields: [countryId], references: [id])
+
+  seasons     Season[]
+  teamSeasons TeamSeason[]
+  matches     Match[]
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastResearchedAt DateTime?
+
+  @@index([countryId, tier])
+}
+
+model Season {
+  id        String       @id @default(cuid())
+  year      String
+  startDate DateTime?
+  endDate   DateTime?
+  status    SeasonStatus @default(UPCOMING)
+
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id])
+
+  championTeamId    String?
+  topScorerPlayerId String?
+
+  teamSeasons TeamSeason[]
+  matches     Match[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([leagueId, year])
+  @@index([status])
+}
+
+model Stadium {
+  id         String  @id @default(cuid())
+  slug       String  @unique
+  name       String
+  city       String
+  capacity   Int?
+  openedYear Int?
+  surface    String?
+
+  countryId String
+  country   Country @relation(fields: [countryId], references: [id])
+
+  teams   Team[]
+  matches Match[]
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastResearchedAt DateTime?
+}
+
+model Team {
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  name           String
+  shortName      String?
+  nicknames      String[]
+  foundedYear    Int?
+  dissolvedYear  Int?
+  badgeUrl       String?
+  primaryColor   String?
+  secondaryColor String?
+  description    String?
+  story          Json?
+  isActive       Boolean  @default(true)
+
+  countryId      String
+  country        Country @relation(fields: [countryId], references: [id])
+  stadiumId      String?
+  stadium        Stadium? @relation(fields: [stadiumId], references: [id])
+  currentCoachId String?
+  currentCoach   Coach?   @relation("CurrentTeamCoach", fields: [currentCoachId], references: [id])
+
+  currentPlayers          Player[]            @relation("CurrentTeamPlayer")
+  playerStints            PlayerTeamStint[]   @relation("StintTeam")
+  loanedOutStints         PlayerTeamStint[]   @relation("StintLoanedFromTeam")
+  coachStints             CoachTeamStint[]
+  teamSeasons             TeamSeason[]
+  homeMatches             Match[]             @relation("HomeTeam")
+  awayMatches             Match[]             @relation("AwayTeam")
+  tournamentChampionships TournamentEdition[] @relation("EditionChampionTeam")
+  tournamentRunnerUps     TournamentEdition[] @relation("EditionRunnerUpTeam")
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastResearchedAt DateTime?
+
+  @@index([countryId])
+  @@index([isActive])
+}
+
+model TeamSeason {
+  id             Int                @id @default(autoincrement())
+  finalPosition  Int?
+  played         Int                @default(0)
+  won            Int                @default(0)
+  drawn          Int                @default(0)
+  lost           Int                @default(0)
+  goalsFor       Int                @default(0)
+  goalsAgainst   Int                @default(0)
+  points         Int                @default(0)
+  outcome        TeamSeasonOutcome?
+
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id])
+  seasonId String
+  season   Season @relation(fields: [seasonId], references: [id])
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, seasonId])
+  @@index([leagueId, seasonId])
+}
+
+model Player {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  fullName    String
+  knownAs     String?
+  birthDate   DateTime?
+  deathDate   DateTime?
+  birthplace  String?
+  position    Position  @default(UNKNOWN)
+  foot        Foot      @default(UNKNOWN)
+  heightCm    Int?
+  weightKg    Int?
+  shirtNumber Int?
+  portraitUrl String?
+  bio         String?
+  story       Json?
+  isRetired   Boolean   @default(false)
+
+  birthCountryId String?
+  birthCountry   Country? @relation(fields: [birthCountryId], references: [id])
+  currentTeamId  String?
+  currentTeam    Team?    @relation("CurrentTeamPlayer", fields: [currentTeamId], references: [id])
+
+  stints             PlayerTeamStint[]
+  nationalTeamCaps   NationalTeamCap[]
+  goalsInMatches     MatchEvent[]      @relation("EventPlayer")
+  assistsInMatches   MatchEvent[]      @relation("EventAssistPlayer")
+  tournamentTopScorer TournamentEdition[] @relation("EditionTopScorer")
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastResearchedAt DateTime?
+
+  @@index([currentTeamId])
+  @@index([isRetired])
+  @@index([position])
+}
+
+model PlayerTeamStint {
+  id          Int       @id @default(autoincrement())
+  startDate   DateTime
+  endDate     DateTime?
+  isLoan      Boolean   @default(false)
+  appearances Int?
+  goals       Int?
+  assists     Int?
+
+  playerId         String
+  player           Player  @relation(fields: [playerId], references: [id])
+  teamId           String
+  team             Team    @relation("StintTeam", fields: [teamId], references: [id])
+  loanedFromTeamId String?
+  loanedFromTeam   Team?   @relation("StintLoanedFromTeam", fields: [loanedFromTeamId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([playerId, startDate])
+  @@index([teamId])
+}
+
+model Coach {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  fullName    String
+  birthDate   DateTime?
+  portraitUrl String?
+  bio         String?
+  story       Json?
+  isRetired   Boolean   @default(false)
+
+  nationalityCountryId String?
+  nationality          Country? @relation(fields: [nationalityCountryId], references: [id])
+
+  currentTeams Team[]           @relation("CurrentTeamCoach")
+  stints       CoachTeamStint[]
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastResearchedAt DateTime?
+}
+
+model CoachTeamStint {
+  id        Int       @id @default(autoincrement())
+  startDate DateTime
+  endDate   DateTime?
+  role      CoachRole @default(HEAD)
+  matches   Int?
+  wins      Int?
+  draws     Int?
+  losses    Int?
+
+  coachId String
+  coach   Coach  @relation(fields: [coachId], references: [id])
+  teamId  String
+  team    Team   @relation(fields: [teamId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([coachId, startDate])
+  @@index([teamId])
+}
+
+model NationalTeam {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  name          String
+  nickname      String?
+  confederation Confederation
+  story         Json?
+
+  countryId String  @unique
+  country   Country @relation(fields: [countryId], references: [id])
+
+  caps                NationalTeamCap[]
+  homeMatches         Match[]             @relation("NTHome")
+  awayMatches         Match[]             @relation("NTAway")
+  championships       TournamentEdition[] @relation("EditionChampionNT")
+  runnerUps           TournamentEdition[] @relation("EditionRunnerUpNT")
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastResearchedAt DateTime?
+}
+
+model NationalTeamCap {
+  id          Int       @id @default(autoincrement())
+  debutDate   DateTime?
+  lastCapDate DateTime?
+  caps        Int       @default(0)
+  goals       Int       @default(0)
+
+  playerId       String
+  player         Player       @relation(fields: [playerId], references: [id])
+  nationalTeamId String
+  nationalTeam   NationalTeam @relation(fields: [nationalTeamId], references: [id])
+
+  @@unique([playerId, nationalTeamId])
+}
+
+model Tournament {
+  id            String         @id @default(cuid())
+  slug          String         @unique
+  name          String
+  shortName     String?
+  organizer     String?
+  confederation Confederation?
+  foundedYear   Int?
+  logoUrl       String?
+  description   String?
+  story         Json?
+
+  editions TournamentEdition[]
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastResearchedAt DateTime?
+}
+
+model TournamentEdition {
+  id    String @id @default(cuid())
+  year  String
+  story Json?
+
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+
+  hostCountryId          String?
+  hostCountry            Country?      @relation("EditionHostCountry", fields: [hostCountryId], references: [id])
+  championTeamId         String?
+  championTeam           Team?         @relation("EditionChampionTeam", fields: [championTeamId], references: [id])
+  championNationalTeamId String?
+  championNationalTeam   NationalTeam? @relation("EditionChampionNT", fields: [championNationalTeamId], references: [id])
+  runnerUpTeamId         String?
+  runnerUpTeam           Team?         @relation("EditionRunnerUpTeam", fields: [runnerUpTeamId], references: [id])
+  runnerUpNationalTeamId String?
+  runnerUpNationalTeam   NationalTeam? @relation("EditionRunnerUpNT", fields: [runnerUpNationalTeamId], references: [id])
+  topScorerPlayerId      String?
+  topScorerPlayer        Player?       @relation("EditionTopScorer", fields: [topScorerPlayerId], references: [id])
+
+  matches Match[]
+  honors  Honor[]
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastResearchedAt DateTime?
+
+  @@unique([tournamentId, year])
+}
+
+model Match {
+  id         String      @id @default(cuid())
+  date       DateTime
+  status     MatchStatus @default(SCHEDULED)
+  round      String?
+  homeScore  Int?
+  awayScore  Int?
+  attendance Int?
+
+  leagueId            String?
+  league              League?            @relation(fields: [leagueId], references: [id])
+  seasonId            String?
+  season              Season?            @relation(fields: [seasonId], references: [id])
+  tournamentEditionId String?
+  tournamentEdition   TournamentEdition? @relation(fields: [tournamentEditionId], references: [id])
+
+  homeTeamId         String?
+  homeTeam           Team?         @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeamId         String?
+  awayTeam           Team?         @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  homeNationalTeamId String?
+  homeNationalTeam   NationalTeam? @relation("NTHome", fields: [homeNationalTeamId], references: [id])
+  awayNationalTeamId String?
+  awayNationalTeam   NationalTeam? @relation("NTAway", fields: [awayNationalTeamId], references: [id])
+
+  stadiumId String?
+  stadium   Stadium? @relation(fields: [stadiumId], references: [id])
+
+  context MatchContext?
+  events  MatchEvent[]
+
+  // self-relation for H2H last-meeting back-pointer (one-way is fine)
+  asLastMeetingFor MatchContext[] @relation("LastMeeting")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
+  @@index([status])
+  @@index([leagueId, seasonId])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+}
+
+model MatchEvent {
+  id          Int            @id @default(autoincrement())
+  minute      Int
+  addedTime   Int?
+  type        MatchEventType
+  isHomeTeam  Boolean
+  description String?
+
+  matchId        String
+  match          Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  playerId       String?
+  player         Player? @relation("EventPlayer", fields: [playerId], references: [id])
+  assistPlayerId String?
+  assistPlayer   Player? @relation("EventAssistPlayer", fields: [assistPlayerId], references: [id])
+
+  @@index([matchId, minute])
+}
+
+model MatchContext {
+  id          String @id @default(cuid())
+  narrative   String
+  factsJson   Json
+  h2hHomeWins Int?
+  h2hAwayWins Int?
+  h2hDraws    Int?
+
+  matchId            String  @unique
+  match              Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  lastMeetingMatchId String?
+  lastMeetingMatch   Match?  @relation("LastMeeting", fields: [lastMeetingMatchId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Honor {
+  id        String    @id @default(cuid())
+  // polymorphic owner — string discriminator
+  ownerType String
+  ownerId   String
+  type      HonorType
+  year      String?
+  note      String?
+
+  tournamentEditionId String?
+  tournamentEdition   TournamentEdition? @relation(fields: [tournamentEditionId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([ownerType, ownerId])
+}
+
+// ---------- CITATION + SEARCH ----------
+
+model Source {
+  id         String     @id @default(cuid())
+  url        String
+  title      String
+  publisher  String?
+  type       SourceType
+  language   String     @default("es")
+  accessedAt DateTime   @default(now())
+
+  citations FactCitation[]
+
+  @@index([url])
+  @@index([type])
+}
+
+model FactCitation {
+  id         String             @id @default(cuid())
+  // polymorphic target
+  entityType String
+  entityId   String
+  fieldName  String?
+  confidence CitationConfidence @default(VERIFIED)
+  note       String?
+
+  sourceId String
+  source   Source @relation(fields: [sourceId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([entityType, entityId, fieldName])
+  @@index([sourceId])
+}
+
+model SearchDocument {
+  id         String  @id @default(cuid())
+  entityType String
+  entityId   String
+  slug       String
+  title      String
+  subtitle   String?
+  body       String
+
+  // tsvector generated column managed by a raw migration; declared here as
+  // Unsupported so Prisma sees it and doesn't try to drop it. We never read
+  // or write it via the client — queries go through prisma.$queryRaw.
+  search_vector Unsupported("tsvector")?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([entityType, entityId])
+  @@index([slug])
+}
